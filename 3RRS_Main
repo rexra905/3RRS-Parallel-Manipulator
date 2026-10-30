@@ -1,0 +1,481 @@
+#include <AccelStepper.h>
+#include <MultiStepper.h>
+
+// Touchscreen pins
+#define XP  33  // Connected to Touch X+ (Analog + Digital)
+#define XM 25  // Connected to Touch X- (Analog + Digital)
+#define YP  32  // Connected to Touch Y+ (Digital Out - D19)
+#define YM 26  // Connected to Touch Y- (Digital Out - TX2)
+
+//stepper 1 
+  // dir: 4
+  //step: 16 (rx2)
+#define S1_dir 4
+#define S1_step 16
+
+
+//stepper 2
+  // dir: 27
+  //step: 17 (tx2)
+#define S2_dir 27
+#define S2_step 17
+
+//stepper 3 
+  // dir: 13
+  //step: 14
+#define S3_dir 13
+#define S3_step 14
+
+AccelStepper stepper1(1,S1_step, S1_dir);
+AccelStepper stepper2(1,S2_step, S2_dir);
+AccelStepper stepper3(1,S3_step, S3_dir);
+
+MultiStepper steppers;
+
+//switch Pin
+#define B1 18 //18
+//enable pin
+#define en 19 //19
+
+// all measurements in mm
+#define R  74.610 //lower base rad
+#define r  53.84 //upper base rad 53.84
+#define L1 46.2 //lower leg len center to center of pivots
+#define L2 95.24 //upper leg len center to center of pivots
+#define h  114.929 //height of resting position of platform.
+
+//for PD controller
+float kp = 0.095; //.085
+float ki = 0.05; //.025
+float kd = 0.025;//.025
+float prevErrX=0;
+float prevErrY=0;
+
+float integralX = 0;
+float integralY = 0;
+
+//timers
+unsigned long prevTime=0;  //previous time reading 
+unsigned long lastPressTime=0;
+unsigned long lastUpdateTime=0;
+unsigned long worldTimePrev=0;
+
+//Speed/acceleration
+float speed1 = 0, speed2 = 0, speed3 = 0;
+float speedPrev1 = 0, speedPrev2 = 0, speedPrev3 = 0;
+float ks = 12;  
+
+bool hasFirstReading = false;
+
+//error filters
+int Erange = 7;
+float prevX = 0;
+float prevY =0;
+int badReadingCount = 0;
+
+//pos filter
+float filteredX =0 ;
+float filteredY =0;
+float strFilter =0.5;
+
+//velocity filter
+float fVelX = 0;
+float fVelY =0;
+float velF =0.2;
+
+// microstepping
+float microstepping = 16; // for example with 1/4 microstepping use 4 
+
+// IK
+float theta1, theta2, theta3;
+
+//State Machene
+int buttonPress=0;
+int totalStates=2;
+bool prevButton = false;
+
+void IK(float roll, float pitch, float &theta1, float &theta2, float &theta3) {
+  float rollRad= roll * PI/180;
+  float pitchRad= pitch * PI/180;
+
+  //Leg 1
+  float b1x = -r*(cos(rollRad));
+  float b1y = 0 ;
+  float b1z = h+(r*sin(rollRad));
+
+  //Leg 2
+  float b2x = (r/2)*cos(rollRad) + sin(rollRad)*sin(pitchRad)*r*(sqrt(3.0)/2);
+  float b2y = (r)*(sqrt(3.0)/2)*cos(pitchRad);
+  float b2z = h - sin(rollRad)*(r/2) +cos(rollRad)*sin(pitchRad)*r*(sqrt(3.0)/2);
+
+  //leg 3
+  float b3x = (r/2)*cos(rollRad) - sin(rollRad)*sin(pitchRad)*r*(sqrt(3.0)/2);
+  float b3y = (-r)*(sqrt(3.0)/2)*cos(pitchRad);
+  float b3z = h - sin(rollRad)*(r/2) - cos(rollRad)*sin(pitchRad)*r*(sqrt(3.0)/2);
+
+  theta1 = computeLeg(b1x,b1y,b1z, -R, 0);
+  theta2 = computeLeg(b2x,b2y,b2z, R/2, R*sqrt(3.0)/2.0);
+  theta3 = computeLeg(b3x,b3y,b3z, R/2, -R*sqrt(3.0)/2.0);
+
+}
+
+void Homing(){
+  digitalWrite(en, HIGH);
+  delay(3000);
+  Serial.println("Wating");
+  while (digitalRead(B1)==HIGH){
+    delay(500);
+  }
+  Serial.println("Done Waiting");
+
+  Serial.println("Homing");
+  digitalWrite(en, LOW);
+
+  stepper1.setCurrentPosition(170.399335*((200*microstepping)/360)); 
+  stepper2.setCurrentPosition(170.399335*((200*microstepping)/360));
+  stepper3.setCurrentPosition(170.399335*((200*microstepping)/360));
+
+
+  Serial.print("Motor1posSET: "); Serial.println(stepper1.currentPosition());
+  Serial.print("Motor2posSET: "); Serial.println(stepper2.currentPosition());
+  Serial.print("Motor3posSET: "); Serial.println(stepper3.currentPosition());
+
+  steppers.addStepper(stepper1);
+  steppers.addStepper(stepper2);
+  steppers.addStepper(stepper3);
+  IK(0, 0, theta1,theta2,theta3);
+
+  stepper1.setMaxSpeed(150*microstepping);
+  stepper2.setMaxSpeed(150*microstepping);
+  stepper3.setMaxSpeed(150*microstepping);
+
+  stepper1.setAcceleration(3000);
+  stepper2.setAcceleration(3000);
+  stepper3.setAcceleration(3000);
+  
+
+  //buttonPress=1;
+
+  long positions[3];
+
+  positions[0]= constrain((theta1),110,150)*((200.0*microstepping)/360);
+  positions[1]= constrain((theta2),110,150)*((200.0*microstepping)/360);
+  positions[2]= constrain((theta3),110,150)*((200.0*microstepping)/360);
+
+  steppers.moveTo(positions);
+
+  steppers.runSpeedToPosition(); 
+  //delay(10000);
+
+  Serial.println("Fin");
+
+  stepper1.setCurrentPosition(1155);
+  stepper2.setCurrentPosition(1155);
+  stepper3.setCurrentPosition(1155);
+
+  stepper1.setSpeed(0);
+  stepper2.setSpeed(0);
+  stepper3.setSpeed(0);
+
+  Serial.println("Positions forcibly reset");
+
+  Serial.print("P1: "); Serial.println(stepper1.currentPosition());
+  Serial.print("P2: "); Serial.println(stepper2.currentPosition());
+  Serial.print("P3: "); Serial.println(stepper3.currentPosition());
+
+}
+
+void setup() {
+  Serial.begin(9600);
+
+  delay(1000); 
+
+  stepper1.setPinsInverted(true);  // invert direction (true on the board)
+  stepper2.setPinsInverted(true);
+  stepper3.setPinsInverted(true);
+  pinMode(B1, INPUT_PULLUP);
+  pinMode(en, OUTPUT);
+
+  Homing();
+}
+
+int getY () {
+    pinMode(XP, OUTPUT);
+    digitalWrite(XP, HIGH);
+    pinMode(XM, OUTPUT);
+    digitalWrite(XM, LOW);
+    pinMode(YP, INPUT);
+    pinMode(YM, INPUT);
+    digitalWrite(YP, LOW);
+    int averageOf = 4;
+    int sum = 0;
+    for (int i = 0; i<averageOf; i++ ) {
+      sum += analogRead(YP);
+    }
+
+    int avg = sum/averageOf;
+    return avg;
+}
+
+int getX() {
+  pinMode(YP, OUTPUT);
+  digitalWrite(YP, HIGH);
+  pinMode(YM, OUTPUT);
+  digitalWrite(YM, LOW);
+  pinMode(XP, INPUT);
+  pinMode(XM, INPUT);
+  digitalWrite(XP, LOW);
+  int averageOf = 4;
+  int sum =0;
+  for( int i=0; i<averageOf; i++){
+    sum+=analogRead(XP);
+  }
+
+  int avg = sum/averageOf;
+  return avg;
+}
+
+float computeLeg(float bx, float by, float bz, float ax, float ay) {
+  float d = sqrt(pow((bx-ax),2)+pow((by-ay),2)+pow((bz),2));
+  float cosVal = ((pow(L1,2))+(pow(d,2))-(pow(L2,2)))/(2*L1*d);
+  cosVal = constrain(cosVal, -1.0, 1.0);  // prevent NaN!
+  float ro = acos(cosVal);
+  float horizontal = sqrt(pow((bx-ax),2)+pow((by-ay),2));
+  float psi = atan2(bz,horizontal);
+  float theta = ro + psi;
+
+  return (theta*180/PI)-1.35;
+
+}
+
+void loop() {
+
+  // run stepppers
+  stepper1.run();
+  stepper2.run();
+  stepper3.run();
+
+  if ((millis()-lastUpdateTime)>4){ //updates every 4 ms``
+    float Xval = getX();
+    float Yval = getY();
+
+    //remap to mm and and centered at origin
+    float Ymm = (((((Xval)-250)/(3150-250))*129.5)-(129.5/2)); //250 (increase move the center to the left)
+    float Xmm = ((((Yval-125)/(3450-125))*172)-(172/2));
+    // bad reading filter
+
+    lastUpdateTime = millis();
+    if (Xval>50 && Yval>50){ //if pressed then move the steppers
+
+      if (!hasFirstReading) {
+        hasFirstReading = true; 
+        prevX = Xmm;
+        prevY = Ymm;
+        prevErrX = Xmm;
+        prevErrY = Ymm;
+        filteredX = Xmm;
+        filteredY=Ymm;
+        prevTime = millis();
+        return;
+      } else if (badReadingCount >3){
+        prevX = Xmm;
+        prevY = Ymm;
+        badReadingCount = 0;
+
+      } else if (abs(Xmm -prevX) > Erange or abs(Ymm -prevY) > Erange) {
+        badReadingCount += 1;
+        Serial.println("Rejected");
+        return;
+      }
+
+      badReadingCount = 0;
+      prevX = Xmm;
+      prevY = Ymm;
+
+
+      //timer updates
+      unsigned long currentTime = millis(); 
+      lastPressTime = millis();
+
+      filteredX = Xmm*strFilter + (1-strFilter)*filteredX;
+      filteredY = Ymm*strFilter + (1-strFilter)*filteredY;
+      //difference in pos and time
+      float dt = (currentTime-prevTime)/1000.0;
+      float dpx = (filteredX-prevErrX);
+      float dpy = (filteredY-prevErrY);
+
+
+      fVelX = velF*(dpx/dt) + (1-velF)*fVelX;
+      fVelY = velF*(dpy/dt) + (1-velF)*fVelY;
+
+      if (abs(fVelX) < 3) {
+        fVelX =0;
+      }
+
+      if (abs(fVelY) < 3) {
+        fVelY =0;
+      }
+
+
+      //integral
+      if (abs(Xmm) < 5) {
+        integralX += Xmm *dt;
+      } else{
+        integralX=0;
+      }
+      integralX = constrain(integralX, -100, 100);
+      if (abs(Ymm) < 5) {
+        integralY += Ymm *dt;
+      } else{
+        integralY=0;
+      }
+      integralY = constrain(integralY, -100, 100);
+
+      prevErrX = filteredX;
+      prevErrY = filteredY;
+      prevTime = currentTime;
+
+
+
+      // calculates roll and pitch
+      float roll = constrain(((kp*Xmm) + (kd* (fVelX))+(ki*integralX)),-20,20);
+      float pitch = constrain(((kp*Ymm) + (kd * (fVelY))+(ki*integralY)),-20,20);
+    
+      // updates the err and IK
+      IK(pitch-3, -roll, theta1,theta2,theta3); //roll pitch
+
+      //stores the angles as a list
+      long positions[3];
+
+      positions[0]= constrain((theta1),110,150)*((200.0*microstepping)/360);
+      positions[1]= constrain((theta2),110,150)*((200.0*microstepping)/360);
+      positions[2]= constrain((theta3),110,150)*((200.0*microstepping)/360);
+
+      // float tilt = sqrt(filteredX*filteredX + filteredY*filteredY);
+      // float speed = constrain((100 + ks*tilt),0,1500);
+
+      // float speed1 = constrain(ks*abs(stepper1.currentPosition() - positions[0]), 10, 5000);
+      // float speed2 = constrain(ks*abs(stepper2.currentPosition() - positions[1]), 10, 5000);
+      // float speed3 = constrain(ks*abs(stepper3.currentPosition() - positions[2]), 10, 5000);
+
+      stepper1.setMaxSpeed(1000);
+      stepper2.setMaxSpeed(1000);
+      stepper3.setMaxSpeed(1000);
+
+      stepper1.moveTo(positions[0]);
+      stepper2.moveTo(positions[1]);
+      stepper3.moveTo(positions[2]);
+
+      // Serial.print("Theta1: "); Serial.println(theta1);
+      // Serial.print("Theta2: "); Serial.println(theta2);
+      // Serial.print("Theta3: "); Serial.println(theta3);
+
+    }
+  else if((millis()-lastPressTime)>1000) {
+      Serial.println("NO PRESSURE");
+      IK(0, 0, theta1,theta2,theta3); //roll , pitch (10,0) Back left (0,20)right
+
+      hasFirstReading = false ;
+      integralX=0;
+      integralY=0;
+      badReadingCount=0;
+      filteredX=0;
+      filteredY=0;
+
+
+      long positions[3];
+
+      positions[0]= constrain((theta1),100,150)*((200.0*microstepping)/360);
+      positions[1]= constrain((theta2),100,150)*((200.0*microstepping)/360);
+      positions[2]= constrain((theta3),100,150)*((200.0*microstepping)/360);
+
+      // Serial.print("No press pos1: "); Serial.println(positions[0]);
+      // Serial.print("No press pos2: "); Serial.println(positions[1]);
+      // Serial.print("No press pos3: "); Serial.println(positions[2]);
+
+      // Serial.print("Current pos: "); Serial.println(stepper1.currentPosition());
+
+
+      stepper1.setMaxSpeed(1000);
+      stepper2.setMaxSpeed(1000);
+      stepper3.setMaxSpeed(1000);
+
+      stepper1.moveTo(positions[0]);
+      stepper2.moveTo(positions[1]);
+      stepper3.moveTo(positions[2]);
+
+      
+      // Serial.print("Theta1: "); Serial.println(theta1);
+      // Serial.print("Theta2: "); Serial.println(theta2);
+      // Serial.print("Theta3: "); Serial.println(theta3);
+
+      // Serial.print("actual1: "); Serial.println(stepper1.currentPosition());
+      // Serial.print("actual2: "); Serial.println(stepper2.currentPosition());
+      // Serial.print("actual3: "); Serial.println(stepper3.currentPosition());
+
+    }
+  }
+
+}
+
+// void loop() {
+
+//   IK(0, 0, theta1, theta2, theta3);
+
+//   long positions[3];
+
+//   positions[0] = constrain(theta1, 100, 150) * ((200.0 * microstepping) / 360);
+//   positions[1] = constrain(theta2, 100, 150) * ((200.0 * microstepping) / 360);
+//   positions[2] = constrain(theta3, 100, 150) * ((200.0 * microstepping) / 360);
+
+//   stepper1.moveTo(positions[0]);
+//   stepper2.moveTo(positions[1]);
+//   stepper3.moveTo(positions[2]);
+
+//   // stepper1.setSpeed(800);
+//   // stepper2.setSpeed(800);
+//   // stepper3.setSpeed(800);
+
+//   stepper1.run();
+//   stepper2.run();
+//   stepper3.run();
+
+
+//   Serial.print("cmd1: "); Serial.println(stepper1.targetPosition());
+//   // Serial.print("cmd2: "); Serial.println(stepper2.targetPosition());
+//   // Serial.print("cmd3: "); Serial.println(stepper3.targetPosition());;
+
+//   Serial.print("Motor1pos: "); Serial.println(stepper1.currentPosition());
+//   // Serial.print("Motor2pos: "); Serial.println(stepper2.currentPosition());
+//   // Serial.print("Motor3pos: "); Serial.println(stepper3.currentPosition());
+
+//   Serial.print("Motor1togo: "); Serial.println(stepper1.distanceToGo());
+//   // Serial.print("Motor2togo: "); Serial.println(stepper2.distanceToGo());
+//   // Serial.print("Motor3togo: "); Serial.println(stepper3.distanceToGo());
+
+// }
+
+
+// void checkState(){
+//   if ((prevButton==LOW) && (digitalRead(B1)==HIGH)){
+//     buttonPress += 1;
+//     if (buttonPress==totalStates){
+//       buttonPress = 1; //lowest ammount
+//     } // otherwise do nothing
+//   }
+//   prevButton = digitalRead(B1);
+// }
+
+// void loop(){
+
+//   checkState();
+
+//   if(buttonPress ==1){ //balancing mode is state 1
+//     balancingMode();
+
+//   } else if (buttonPress ==2){
+//     Homing();
+//   }
+// }
+
+
