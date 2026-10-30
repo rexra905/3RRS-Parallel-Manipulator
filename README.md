@@ -3,7 +3,7 @@ This is the code for the 3RRS Parallel Manipulator that I built.
 
 I wrote this code in the Arduino IDE, and, unfortunately I did not version control any of it (possibly to my own detrimant as I frogot to save a couple times and lost all my progress — I'm definantly going to implement better versioning in my next project)/
 
-The commented out loops at the bottom and in other various parts are various print statements and parts of test code that were used for testing; I did not want to remove them so the code would be as authentic as possible. 
+The commented out loops at the bottom and in other various parts are various print statements and parts of test code that were used for testing (obviously). 
 
 The main loop is only set to run every couple of miliseconds in order to reduce the loop times. Within 4ms the ball has not moved much so sending more move commands to the steppers is better than recalculating the position they need to be at and then doing it, hence the periodic updates.
 
