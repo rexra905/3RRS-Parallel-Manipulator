@@ -1,6 +1,4 @@
 # 3RRS-Parallel-Manipulator
-This is the code for the 3RRS Parallel Manipulator that I built.
-
 I wrote this code in the Arduino IDE, and unfortunately I did not version control any of it (possibly to my own detriment as I forgot to save a couple times and lost the changes I made— I'm definitely going to implement better versioning in my next project).
 
 The commented out loops at the bottom are test code and a future version of the loop that I am working on. 
