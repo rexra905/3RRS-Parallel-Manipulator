@@ -44,7 +44,7 @@ MultiStepper steppers;
 #define L2 95.24 //upper leg len center to center of pivots
 #define h  114.929 //height of resting position of platform.
 
-//for PD controller
+//for PID controller
 float kp = 0.095; //.085
 float ki = 0.05; //.025
 float kd = 0.025;//.025
